@@ -1,0 +1,151 @@
+x-airflow-common: &airflow-common
+  build: .
+  image: custom-airflow:3.0.0
+
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+
+    AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${SECRET_KEY}
+
+    # ✅ Auth (ONLY FAB)
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__FAB__AUTH_TYPE: basic
+    AIRFLOW__FAB__AUTH_USER_REGISTRATION_ROLE: Admin
+    AIRFLOW__FAB__UPDATE_PERMS: "False"
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+
+    # ✅ Execution API
+    AIRFLOW__CORE__EXECUTION_API_ENABLED: "true"
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080
+    AIRFLOW__CORE__EXECUTION_API_SECRET_KEY: ${SECRET_KEY}
+
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 5
+    AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 5
+    AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT: 30
+
+    AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+
+  volumes:
+    - ./dags:/opt/airflow/dags:delegated
+    - ./tests:/opt/airflow/tests
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      retries: 5
+
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        airflow db migrate
+
+        airflow users create \
+          --username ${AIRFLOW_UI_USERNAME} \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com \
+          --password ${AIRFLOW_UI_PASSWORD} || true
+
+        airflow users list
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+
+  airflow-api-server:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        airflow db migrate
+        exec airflow api-server --port 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+
+  airflow-scheduler:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - airflow scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-api-server:
+        condition: service_healthy
+
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - airflow dag-processor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+
+  airflow-triggerer:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - airflow triggerer
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+
+  airflow-test:
+    <<: *airflow-common
+    command: bash -c "pytest /opt/airflow/tests"
+    profiles:
+      - test
+
+
+volumes:
+  postgres-db-volume:

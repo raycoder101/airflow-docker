@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env
+logs/
+*.db
+airflow.cfg
+*.sqlite
+.docker/
+.envrc
+.env.*
+.envrc
+*.log
