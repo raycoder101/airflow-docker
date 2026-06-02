@@ -1,2 +1,5 @@
 pytest
 apache-airflow-providers-fab
+apache-airflow-providers-amazon
+confluent-kafka
+boto3

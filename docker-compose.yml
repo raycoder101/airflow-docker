@@ -2,8 +2,28 @@ x-airflow-common: &airflow-common
   build: .
   image: custom-airflow:3.0.0
 
+  # Join the Kafka Docker network so Airflow can reach kafka:29092 directly.
+  # Kafka advertises localhost:9092 for its external listener, so host.docker.internal
+  # causes a metadata redirect back to localhost inside the container. Using the
+  # internal listener kafka:29092 on the shared network avoids that entirely.
+  networks:
+    - default
+    - kafka_network
+
   environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
+
+    # AWS credentials for S3 upload and Glue job trigger
+    AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-2}
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+
+    # Lakehouse config — populated after `terraform apply`
+    LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET}
+    GLUE_JOB_NAME: ${GLUE_JOB_NAME}
+    KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:29092}
+    KAFKA_TOPIC: ${KAFKA_TOPIC:-test-events}
+    KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-airflow-iceberg-consumer}
 
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
 
@@ -21,6 +41,10 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__EXECUTION_API_ENABLED: "true"
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution
     AIRFLOW__API_AUTH__JWT_SECRET: ${SECRET_KEY}
+    AIRFLOW__API_AUTH__JWT_EXPIRATION_TIME: 86400  # seconds (24h); task heartbeats survive overnight Mac sleep
+
+    AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_PRE_PING: "true"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_RECYCLE: 1800
 
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
 
@@ -36,11 +60,13 @@ x-airflow-common: &airflow-common
     - ./tests:/opt/airflow/tests
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
+    - ./scripts:/opt/airflow/scripts:ro
 
 
 services:
   postgres:
     image: postgres:15
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -81,6 +107,7 @@ services:
 
   airflow-api-server:
     <<: *airflow-common
+    restart: unless-stopped
     entrypoint: /bin/bash
     command:
       - -c
@@ -103,6 +130,7 @@ services:
 
   airflow-scheduler:
     <<: *airflow-common
+    restart: unless-stopped
     hostname: airflow-scheduler
     entrypoint: /bin/bash
     command:
@@ -121,10 +149,22 @@ services:
 
   airflow-dag-processor:
     <<: *airflow-common
+    restart: unless-stopped
     entrypoint: /bin/bash
     command:
       - -c
-      - airflow dag-processor
+      - |
+        airflow dag-processor &
+        DAG_PROC_PID=$$!
+        sleep 120
+        while kill -0 $$DAG_PROC_PID 2>/dev/null; do
+          sleep 60
+          if ! python3 /opt/airflow/scripts/dag_processor_healthcheck.py 2>/dev/null; then
+            echo "DAGs are stale — exiting to trigger container restart"
+            kill $$DAG_PROC_PID
+            exit 1
+          fi
+        done
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,6 +174,7 @@ services:
 
   airflow-triggerer:
     <<: *airflow-common
+    restart: unless-stopped
     entrypoint: /bin/bash
     command:
       - -c
@@ -154,3 +195,9 @@ services:
 
 volumes:
   postgres-db-volume:
+
+networks:
+  default: {}
+  kafka_network:
+    external: true
+    name: kafka-docker_default
