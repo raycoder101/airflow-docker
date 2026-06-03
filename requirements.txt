@@ -3,3 +3,6 @@ apache-airflow-providers-fab
 apache-airflow-providers-amazon
 confluent-kafka
 boto3
+# ── DBT + GX: installed without Airflow constraints to avoid dependency conflicts ──
+# These are handled in a separate pip install layer in the Dockerfile.
+# Listed here for documentation; actual install is in Dockerfile directly.
