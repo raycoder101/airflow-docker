@@ -69,8 +69,8 @@ x-airflow-common: &airflow-common
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
     - ./scripts:/opt/airflow/scripts:ro
-    - ../dbt-lakehouse:/opt/airflow/dbt-lakehouse:ro
-    - ../gx-lakehouse:/opt/airflow/gx-lakehouse:ro
+    - ../dbt-lakehouse:/opt/airflow/dbt-lakehouse
+    - ../gx-lakehouse:/opt/airflow/gx-lakehouse
 
 
 services:

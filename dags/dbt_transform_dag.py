@@ -34,7 +34,8 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator, ShortCircuitOperator
 from airflow.sensors.external_task import ExternalTaskSensor
 
-GX_SCRIPTS_DIR   = os.environ.get("GX_ROOT", "/opt/airflow/gx-lakehouse/gx").replace("/gx", "") + "/scripts"
+_GX_ROOT         = os.environ.get("GX_ROOT", "/opt/airflow/gx-lakehouse/gx")
+GX_SCRIPTS_DIR   = os.path.join(os.path.dirname(_GX_ROOT), "scripts")
 DBT_PROFILES_DIR = os.environ.get("DBT_PROFILES_DIR", "/opt/airflow/dbt-lakehouse")
 DBT_PROJECT_DIR  = DBT_PROFILES_DIR
 
@@ -65,11 +66,26 @@ def run_fct_checkpoint():
 
 
 def build_gx_docs():
+    import boto3
     import great_expectations as gx
     gx_root = os.environ.get("GX_ROOT", "/opt/airflow/gx-lakehouse/gx")
-    context = gx.get_context(context_root_dir=gx_root)
+    project_root = os.path.dirname(gx_root)
+    context = gx.get_context(mode="file", project_root_dir=project_root)
     context.build_data_docs()
-    print("[GX] Data Docs published to s3://lakehouse-dev-raycoder101/gx/data-docs/")
+
+    # Sync local Data Docs to S3 so they are accessible outside the container
+    docs_dir = os.path.join(gx_root, "uncommitted", "data_docs")
+    bucket = os.environ.get("LAKEHOUSE_BUCKET", "lakehouse-dev-raycoder101")
+    s3 = boto3.client("s3", region_name=os.environ.get("AWS_DEFAULT_REGION", "us-west-2"))
+    synced = 0
+    for root, _, files in os.walk(docs_dir):
+        for fname in files:
+            local_path = os.path.join(root, fname)
+            s3_key = "gx/data-docs/" + os.path.relpath(local_path, docs_dir)
+            content_type = "text/html" if fname.endswith(".html") else "application/octet-stream"
+            s3.upload_file(local_path, bucket, s3_key, ExtraArgs={"ContentType": content_type})
+            synced += 1
+    print(f"[GX] Data Docs built and synced {synced} files → s3://{bucket}/gx/data-docs/")
 
 
 # ── DAG ──────────────────────────────────────────────────────────────────────
