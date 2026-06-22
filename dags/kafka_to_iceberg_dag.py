@@ -28,6 +28,7 @@ from datetime import datetime, timedelta
 import boto3
 from airflow import DAG
 from airflow.decorators import task
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 # ── Configuration — read from environment variables set in docker-compose.yml
 # Variable.get() is intentionally avoided at module level: in Airflow 3 the
@@ -174,4 +175,12 @@ with DAG(
 
     # ── Wire up tasks ───────────────────────────────────────────────────────
     consume_result = consume_kafka()
-    trigger_glue(consume_result)
+    glue_result = trigger_glue(consume_result)
+
+    trigger_dbt_transform = TriggerDagRunOperator(
+        task_id="trigger_dbt_transform",
+        trigger_dag_id="dbt_transform",
+        wait_for_completion=False,
+        reset_dag_run=True,
+    )
+    glue_result >> trigger_dbt_transform

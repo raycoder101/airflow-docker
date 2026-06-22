@@ -42,6 +42,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution
     AIRFLOW__API_AUTH__JWT_SECRET: ${SECRET_KEY}
     AIRFLOW__API_AUTH__JWT_EXPIRATION_TIME: 86400  # seconds (24h); task heartbeats survive overnight Mac sleep
+    AIRFLOW__WORKERS__JWT_EXPIRATION_TIME: 86400   # task execution token — must outlive the longest task
 
     AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_PRE_PING: "true"
     AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_RECYCLE: 1800

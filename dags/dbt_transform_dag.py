@@ -32,7 +32,6 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator, ShortCircuitOperator
-from airflow.sensors.external_task import ExternalTaskSensor
 
 _GX_ROOT         = os.environ.get("GX_ROOT", "/opt/airflow/gx-lakehouse/gx")
 GX_SCRIPTS_DIR   = os.path.join(os.path.dirname(_GX_ROOT), "scripts")
@@ -104,17 +103,6 @@ with DAG(
     tags=["lakehouse", "dbt", "great-expectations"],
 ) as dag:
 
-    wait_for_ingestion = ExternalTaskSensor(
-        task_id="wait_for_ingestion",
-        external_dag_id="kafka_to_iceberg",
-        external_task_id=None,       # wait for the whole DAG run to succeed
-        allowed_states=["success"],
-        mode="reschedule",
-        poke_interval=60,
-        timeout=3600,
-        execution_delta=timedelta(0),
-    )
-
     gx_validate_raw = ShortCircuitOperator(
         task_id="gx_validate_raw",
         python_callable=run_raw_checkpoint,
@@ -152,4 +140,4 @@ with DAG(
     )
 
     # ── Task graph ────────────────────────────────────────────────────────────
-    wait_for_ingestion >> gx_validate_raw >> dbt_run >> dbt_test >> gx_validate_marts >> gx_build_docs
+    gx_validate_raw >> dbt_run >> dbt_test >> gx_validate_marts >> gx_build_docs
